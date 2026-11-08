@@ -571,7 +571,9 @@ export const layer = Layer.effect(
       const prepared = yield* prepare(context, context.messages, budget, "session")
 
       const toResult = (window: ReadonlyArray<Message>, usage: Usage | undefined) =>
-        spend(context.session.id, usage && SessionUsage.record(usage, context.model.cost)).pipe(
+        spend(context.session.id, usage && SessionUsage.record(usage, context.model.cost), undefined, {
+          model: context.model.ref,
+        }).pipe(
           Effect.as<Result>({
             text: "",
             // Plain JSON, not the schema encoder: provider metadata can hold undefined entries, which it rejects.
@@ -804,9 +806,10 @@ export const layer = Layer.effect(
             }
 
             if (LLMEvent.is.stepFinish(event)) {
-              return spend(sessionID, SessionUsage.record(event.usage, context.model.cost), background?.usage).pipe(
-                Effect.as(streamed),
-              )
+              return spend(sessionID, SessionUsage.record(event.usage, context.model.cost), background?.usage, {
+                model: context.model.ref,
+                native: event.providerMetadata?.[request.model.route.providerMetadataKey ?? request.model.provider],
+              }).pipe(Effect.as(streamed))
             }
 
             if (!LLMEvent.is.finish(event)) return Effect.succeed(streamed)
@@ -895,11 +898,12 @@ export const layer = Layer.effect(
       sessionID: SessionContext.Loaded["session"]["id"],
       usage: SessionUsage.Recorded | undefined,
       record = (recorded: SessionUsage.Recorded) => addSpent(sessionID, recorded),
+      call?: Pick<SessionEvent.UsageRecorded["data"], "model" | "native">,
     ) =>
       Effect.gen(function* () {
         if (!usage) return
         record(usage)
-        yield* bus.publish(SessionEvent.UsageRecorded, { sessionID, source: "compaction", ...usage })
+        yield* bus.publish(SessionEvent.UsageRecorded, { sessionID, source: "compaction", ...usage, ...call })
       })
 
     const publish = Effect.fnUntraced(function* (

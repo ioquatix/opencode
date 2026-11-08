@@ -359,7 +359,8 @@ describe("OpencodePlugin", () => {
                   label: initial.label,
                 }),
               ).toEqual(stored.value)
-              expect(requests).toEqual([
+              // Telemetry discovery runs on its own, beside these.
+              expect(requests.filter((path) => path !== "/api/v2/telemetry")).toEqual([
                 "/auth/device/token",
                 "/api/v2/config",
                 ...(scenario.orgID === "org-missing" ? [] : ["/api/v2/instructions", "/api/v2/skills"]),
@@ -1274,7 +1275,7 @@ describe("OpencodePlugin", () => {
               ],
             }),
           )
-          expect(requests).toEqual([
+          expect(requests.filter((request) => request.path !== "/api/v2/telemetry")).toEqual([
             {
               method: "GET",
               path: "/api/v2/config",
@@ -1339,7 +1340,7 @@ describe("OpencodePlugin", () => {
           yield* eventually(websearch.providers(), (providers) =>
             providers.every((provider) => provider.id !== WebSearch.ID.make("opencode")),
           )
-          expect(requests.at(-1)).toMatchObject({
+          expect(requests.filter((request) => request.path !== "/api/v2/telemetry").at(-1)).toMatchObject({
             method: "GET",
             path: "/api/v2/config",
             authorization: "Bearer switched",

@@ -266,6 +266,59 @@ describe("ClaudeAgentPlugin models", () => {
   )
 })
 
+// What Console reporting reads off a finished step, for a Claude Code login of this kind.
+const planProof = Effect.fn(function* (account: AccountInfo) {
+  yield* connect
+  const onConnect = FakeClaude.expectStartup({ account })
+  const claude = FakeClaude.make([
+    onConnect,
+    FakeClaude.expectStartup({ account }),
+    FakeClaude.expectTurn(),
+    FakeClaude.expectInterrupt(),
+  ])
+  const registry = yield* addPlugin(FakeIO.make({ claude }))
+  yield* Effect.promise(() => claude.reached(onConnect))
+  yield* eventually(storage.pipe(Effect.flatMap((store) => store.get("models"))), (saved) =>
+    Boolean(saved && typeof saved === "object" && "subscription" in saved),
+  )
+  const aisdk = yield* AISDK.Service
+  const sdk = yield* aisdk.runSDK({
+    model: Model.Info.make({
+      ...Model.Info.default(ClaudeProvider.ID, haiku.id),
+      modelID: haiku.id,
+      package: Provider.aisdk(ClaudeProvider.PACKAGE),
+    }),
+    package: ClaudeProvider.PACKAGE,
+    options: {},
+  })
+  const model: LanguageModelV3 = sdk.sdk.languageModel("haiku")
+  const result = yield* Effect.promise(() =>
+    model.doStream({
+      prompt: TestSessions.prompt("Remember the marker COPPER-OTTER. Reply only with that marker."),
+      headers: { [RequestKind.SESSION_HEADER]: "session-a", [RequestKind.HEADER]: "primary" },
+    }),
+  )
+  const parts = yield* Effect.promise(() => TestSessions.collect(result.stream))
+  yield* registry.close()
+  return parts.findLast((part) => part.type === "finish")?.providerMetadata?.[ClaudeProvider.ID]
+})
+
+describe("ClaudeAgentPlugin plan proof", () => {
+  it.live("marks a step answered on a Claude subscription", () =>
+    Effect.gen(function* () {
+      expect(yield* planProof({ subscriptionType: "Claude Team", apiProvider: "firstParty" })).toMatchObject({
+        subscription: true,
+      })
+    }),
+  )
+
+  it.live("doesn't mark a step on an API key login", () =>
+    Effect.gen(function* () {
+      expect(yield* planProof(apiKey)).not.toHaveProperty("subscription")
+    }),
+  )
+})
+
 describe("ClaudeAgentPlugin connection", () => {
   it.live("connecting without claude installed asks the user to install it", () =>
     Effect.gen(function* () {

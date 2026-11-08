@@ -8,8 +8,8 @@ import { Recorder } from "../lib/recorder"
 import { TestTools } from "../lib/tools"
 
 // The recorded first reply calls lookup twice.
-function firstToolReply(tools: readonly LanguageModelV3FunctionTool[]) {
-  const convert = ConvertClaudeStream.make(tools)
+function firstToolReply(tools: readonly LanguageModelV3FunctionTool[], subscription?: () => boolean) {
+  const convert = ConvertClaudeStream.make(tools, subscription)
   const parts: LanguageModelV3StreamPart[] = []
   for (const line of Recorder.load("tools")) {
     if (line.from !== "claude" || line.message.type === "control_response") continue
@@ -42,6 +42,41 @@ describe("Claude conversions", () => {
       type: "finish",
       providerMetadata: undefined,
     })
+  })
+
+  test("a step a Claude plan answered finishes with that proof, the vendor model and its cache lifetimes", () => {
+    expect(firstToolReply(TestTools.tools, () => true).at(-1)).toMatchObject({
+      type: "finish",
+      providerMetadata: {
+        "claude-agent": {
+          subscription: true,
+          model: "claude-haiku-5-5",
+          requestID: "req_011Cg6r3DcQGA1sjEcrswDsR",
+          cacheWrite5m: 0,
+          cacheWrite1h: 2393,
+        },
+      },
+    })
+  })
+
+  test("a step that wasn't on a plan carries no proof of one", () => {
+    const finish = firstToolReply(TestTools.tools, () => false).at(-1)
+    expect(finish).toMatchObject({ type: "finish" })
+    expect((finish as { providerMetadata?: Record<string, object> }).providerMetadata?.["claude-agent"]).not.toHaveProperty(
+      "subscription",
+    )
+  })
+
+  test("a step of several model calls names no single request and keeps the last call's cache writes", () => {
+    const convert = ConvertClaudeStream.make(TestTools.tools, () => true)
+    const parts: LanguageModelV3StreamPart[] = []
+    for (const line of Recorder.load("tools")) {
+      if (line.from === "claude" && line.message.type !== "control_response")
+        parts.push(...convert(line.message as SDKMessage))
+    }
+    const finish = parts.findLast((part) => part.type === "finish")
+    expect(finish?.providerMetadata?.["claude-agent"]).toMatchObject({ subscription: true, cacheWrite1h: 115 })
+    expect(finish?.providerMetadata?.["claude-agent"]).not.toHaveProperty("requestID")
   })
 
   test("utility calls keep system instructions separate from conversation content and omit thinking", () => {

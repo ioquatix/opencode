@@ -12,6 +12,7 @@ import { llmClient } from "../effect/app-node-platform.js"
 import { SessionContext } from "./context.js"
 import { SessionEvent } from "./event.js"
 import { SessionHistory } from "./history.js"
+import type { SessionMessage } from "./message.js"
 import type { SessionRunnerModel } from "./runner/model.js"
 import { SessionSchema } from "./schema.js"
 import { SessionUsage } from "./usage.js"
@@ -60,12 +61,15 @@ export const layer = Layer.effect(
       const commentary = new Set<string>()
       let failed = false
       let usage: SessionUsage.Recorded | undefined
+      let native: SessionMessage.Native | undefined
       const recordUsage = Effect.suspend(() =>
         usage
           ? bus.publish(SessionEvent.UsageRecorded, {
               sessionID: input.session.id,
               source: "title",
               ...usage,
+              model: input.model.ref,
+              native,
             })
           : Effect.void,
       )
@@ -90,6 +94,7 @@ export const layer = Layer.effect(
           if (LLMEvent.is.stepFinish(event)) {
             const step = SessionUsage.record(event.usage, input.model.cost)
             usage = usage ? SessionUsage.add(usage, step) : step
+            native = event.providerMetadata?.[metadataKey] ?? native
           }
           return Effect.void
         }),

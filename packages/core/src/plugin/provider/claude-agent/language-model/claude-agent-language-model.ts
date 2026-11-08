@@ -26,6 +26,7 @@ export class Model implements LanguageModelV3 {
     readonly modelId: string,
     readonly dependencies: Dependencies,
     readonly connection: Readonly<Record<string, string>> = {},
+    readonly subscription: () => boolean = () => false,
   ) {}
 
   async doGenerate(_options: LanguageModelV3CallOptions): Promise<never> {
@@ -55,7 +56,7 @@ export class Model implements LanguageModelV3 {
     const sourceID = primary ? headers[RequestKind.FORK_HEADER] : branch ? session : undefined
     // Branches offer the chat's tools and system prompt so Claude reuses the chat's prompt cache.
     const offered = primary || branch ? tools : []
-    const convert = ConvertClaudeStream.make(offered)
+    const convert = ConvertClaudeStream.make(offered, this.subscription)
     // Titles are standalone tasks, so OpenCode's system prompt replaces Claude Code's.
     const system =
       primary || branch ? ClaudeSystemPrompt.make(agent, instructions) : ClaudeSystemPrompt.utility(options.prompt)

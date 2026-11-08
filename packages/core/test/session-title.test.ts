@@ -205,6 +205,34 @@ const enableTitleAgent = Effect.gen(function* () {
   })
 })
 
+it.effect("records which model made the title and what its finish reported", () =>
+  Effect.gen(function* () {
+    titleStream = () =>
+      Stream.make(
+        LLMEvent.textDelta({ id: "title", text: "Generated Title\n" }),
+        LLMEvent.stepFinish({
+          index: 0,
+          reason: { normalized: "stop" },
+          usage: { inputTokens: 10, outputTokens: 4, nonCachedInputTokens: 10 },
+          providerMetadata: { openai: { subscription: true } },
+        }),
+        LLMEvent.finish({ reason: { normalized: "stop" } }),
+      )
+    yield* enableTitleAgent
+    const sessionID = Session.ID.make("ses_title_usage")
+    yield* insertSession(sessionID)
+    yield* prompt(sessionID, "Help me debug the failing build")
+    const bus = yield* Bus.Service
+    const recorded = yield* bus
+      .subscribe(SessionEvent.UsageRecorded)
+      .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild({ startImmediately: true }))
+    const title = yield* SessionTitle.Service
+    yield* title.generate(sessionID)
+    const events = yield* Fiber.join(recorded)
+    expect(events[0]?.data).toMatchObject({ model: { id: "title-model" }, native: { subscription: true } })
+  }),
+)
+
 it.effect("generates a title from the sole user message and renames the session", () =>
   Effect.gen(function* () {
     yield* enableTitleAgent

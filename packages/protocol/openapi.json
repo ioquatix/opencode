@@ -30133,6 +30133,12 @@
               },
               "tokens": {
                 "$ref": "#/components/schemas/TokenUsage.Info"
+              },
+              "model": {
+                "$ref": "#/components/schemas/Model.Ref"
+              },
+              "native": {
+                "$ref": "#/components/schemas/Session.Message.Native"
               }
             },
             "required": ["sessionID", "source", "cost", "tokens"],

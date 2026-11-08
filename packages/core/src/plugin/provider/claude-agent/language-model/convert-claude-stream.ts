@@ -7,7 +7,7 @@ import { ClaudeUsage } from "./usage.js"
 import { ToolNames } from "../tools/names.js"
 import { ClaudeAgentError } from "./claude-agent-error.js"
 
-export function make(tools: readonly LanguageModelV3FunctionTool[]) {
+export function make(tools: readonly LanguageModelV3FunctionTool[], subscription: () => boolean = () => false) {
   const usage = ClaudeUsage.make()
   const failure = ClaudeAgentError.make()
   const streamed = new Set<string>()
@@ -17,7 +17,24 @@ export function make(tools: readonly LanguageModelV3FunctionTool[]) {
   let metadata: Record<string, { sessionID: string; messageID: string }> | undefined
   // Plugins read plan usage from step metadata instead of polling Anthropic for it.
   let rateLimit: SDKRateLimitInfo | undefined
-  const finishMetadata = () => (rateLimit ? { [Provider.ID.claudeAgent]: { rateLimit } } : undefined)
+  let vendorModel: string | undefined
+  let requestID: string | undefined
+  // `subscription` is this step's proof that a Claude plan answered it, for whoever reports plan usage. A wrapper that
+  // routes a step elsewhere replaces this metadata, so the marker cannot follow the step there.
+  const finishMetadata = () => {
+    const details = {
+      ...(rateLimit ? { rateLimit } : {}),
+      ...(subscription() && usage.calls() > 0
+        ? {
+            subscription: true,
+            model: vendorModel,
+            ...usage.cacheWrites(),
+            ...(requestID && usage.calls() === 1 ? { requestID } : {}),
+          }
+        : {}),
+    }
+    return Object.keys(details).length > 0 ? { [Provider.ID.claudeAgent]: details } : undefined
+  }
 
   return (message: SDKMessage): LanguageModelV3StreamPart[] => {
     const parts: LanguageModelV3StreamPart[] = []
@@ -90,6 +107,8 @@ export function make(tools: readonly LanguageModelV3FunctionTool[]) {
       // Stream events carry API message IDs; only the complete assistant message carries the transcript UUID.
       metadata = { [Provider.ID.claudeAgent]: { sessionID: message.session_id, messageID: message.uuid } }
       usage.update(message.message.id, message.message.usage)
+      vendorModel = message.message.model
+      requestID = message.request_id ?? requestID
       for (const block of message.message.content) {
         if (block.type !== "tool_use") continue
         const toolName = ToolNames.original(block.name, tools)

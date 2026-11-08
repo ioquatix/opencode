@@ -45,7 +45,7 @@ import { Skill } from "@opencode/schema/skill"
 import { Shell } from "@opencode/schema/shell"
 import { DateTime, Deferred, Effect, Fiber, Layer, Schema, Stream } from "effect"
 import { TestClock } from "effect/testing"
-import { asc, eq, inArray, sql } from "drizzle-orm"
+import { and, asc, eq, inArray, sql } from "drizzle-orm"
 import { testEffect } from "./lib/effect"
 
 let requests: LLMRequest[] = []
@@ -93,6 +93,7 @@ const client = Layer.mock(LLMClient.Service)({
               cacheWriteInputTokens: 2,
               reasoningTokens: 2,
             },
+            providerMetadata: { openai: { subscription: true } },
           }),
           LLMEvent.finish({
             reason: { normalized: "stop" },
@@ -757,6 +758,20 @@ it.effect("manual compaction summarizes short context instead of no-op", () =>
       { type: Bus.versionedType(SessionEvent.UsageRecorded.type, 1) },
       { type: Bus.versionedType(SessionEvent.Compaction.Ended.type, 1) },
     ])
+    // Usage reporting attributes the call from these, and the call's own metadata says who answered it.
+    expect(
+      (yield* db
+        .select({ data: EventTable.data })
+        .from(EventTable)
+        .where(
+          and(
+            eq(EventTable.aggregate_id, sessionID),
+            eq(EventTable.type, Bus.versionedType(SessionEvent.UsageRecorded.type, 1)),
+          ),
+        )
+        .get()
+        .pipe(Effect.orDie))?.data,
+    ).toMatchObject({ model: { id: "summary-model", providerID: "test" }, native: { subscription: true } })
   }),
 )
 

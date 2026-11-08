@@ -1397,6 +1397,8 @@ export type ExperimentalSessionLogOutput =
               readonly reasoning: number
               readonly cache: { readonly read: number; readonly write: number }
             }
+            readonly model?: Model.Ref | undefined
+            readonly native?: SessionMessage.Native | undefined
           }
         }
       | {

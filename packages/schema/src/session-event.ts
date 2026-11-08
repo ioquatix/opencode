@@ -165,6 +165,9 @@ export const UsageRecorded = Event.durable({
     source: Schema.Literals(["title", "compaction"]),
     cost: Money.USD,
     tokens: TokenUsage.Info,
+    /** The model that made the call. Absent when a hook supplied a summary, which makes no call. */
+    model: Model.Ref.pipe(optional),
+    native: SessionMessage.Native.pipe(optional),
   },
 })
 export type UsageRecorded = typeof UsageRecorded.Type

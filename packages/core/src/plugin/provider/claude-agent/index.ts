@@ -37,9 +37,9 @@ export const make = (io: ClaudeIO.Interface, registry = ClaudeSessions.registry(
           Stream.runForEach((event) => sessions.idle(event.data.sessionID)),
           Effect.forkScoped({ startImmediately: true }),
         )
-      yield* ClaudeProvider.register(ctx, status, io)
+      const provider = yield* ClaudeProvider.register(ctx, status, io)
       yield* ClaudeIntegration.register(ctx, status)
-      yield* ClaudeAISDK.register(ctx, sessions)
+      yield* ClaudeAISDK.register(ctx, sessions, provider.subscription)
       yield* ClaudeSessionHooks.register(ctx)
       yield* ClaudeInstructions.register(ctx)
     }),

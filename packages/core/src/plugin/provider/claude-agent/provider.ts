@@ -24,6 +24,7 @@ const CatalogModel = Schema.Struct({
 type CatalogModel = typeof CatalogModel.Type
 const Catalog = Schema.Struct({
   priceSource: Schema.optionalKey(Provider.ID),
+  subscription: Schema.optionalKey(Schema.Boolean),
   models: Schema.Array(CatalogModel),
 })
 type Catalog = typeof Catalog.Type
@@ -70,6 +71,7 @@ export const register = Effect.fn("ClaudeProvider.register")(function* (
         const baseURL = (yield* connection(ctx)).ANTHROPIC_BASE_URL ?? io.env().ANTHROPIC_BASE_URL
         const next = {
           priceSource: priceSource(state.probe.account, baseURL),
+          subscription: subscription(state.probe.account, baseURL),
           models: fromClaude(state.probe.models, current.catalog.models),
         }
         if (JSON.stringify(next) === JSON.stringify(current.catalog)) return
@@ -85,6 +87,8 @@ export const register = Effect.fn("ClaudeProvider.register")(function* (
   if (current.catalog.models.length === 0 && (yield* ctx.integration.connection.active(ID))) {
     yield* status.refresh().pipe(Effect.forkScoped)
   }
+
+  return { subscription: () => current.catalog.subscription === true }
 })
 
 export const connection = Effect.fn("ClaudeProvider.connection")(function* (ctx: Context) {
@@ -119,6 +123,10 @@ function priceSource(account: AccountInfo, baseURL: string | undefined) {
   if (account.apiProvider === undefined) return
   if (account.apiProvider === "firstParty" && account.apiKeySource === undefined) return
   return PRICE_SOURCES[account.apiProvider]
+}
+
+function subscription(account: AccountInfo, baseURL: string | undefined) {
+  return !baseURL && account.apiProvider === "firstParty" && account.apiKeySource === undefined
 }
 
 function toModel(model: CatalogModel, prices: ReadonlyMap<string, Model.Info> | undefined): Model.Info {

@@ -16,3 +16,12 @@ export function foldSettings(entries: readonly Entry[], id: string, initial: Pro
     .filter((entry): entry is Document => entry.type === "document")
     .reduce((settings, entry) => Provider.mergeOverlay(settings, entry.info.providers?.[id]?.settings), initial)
 }
+
+export function foldModelSettings(entries: readonly Entry[], id: string, modelID: string) {
+  return entries
+    .filter((entry): entry is Document => entry.type === "document")
+    .reduce<Provider.Settings | undefined>(
+      (settings, entry) => Provider.mergeOverlay(settings, entry.info.providers?.[id]?.models?.[modelID]?.settings),
+      undefined,
+    )
+}

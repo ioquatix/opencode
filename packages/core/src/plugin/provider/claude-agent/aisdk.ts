@@ -7,7 +7,11 @@ import type { ClaudeSessions } from "./claude/sessions.js"
 import { ClaudeAgentLanguageModel } from "./language-model/claude-agent-language-model.js"
 import { ClaudeProvider } from "./provider.js"
 
-export const register = Effect.fn("ClaudeAISDK.register")(function* (ctx: Context, sessions: ClaudeSessions.Interface) {
+export const register = Effect.fn("ClaudeAISDK.register")(function* (
+  ctx: Context,
+  sessions: ClaudeSessions.Interface,
+  subscription: () => boolean,
+) {
   const context = yield* Effect.context<never>()
   const run = Effect.runPromiseWith(context)
   const dependencies: ClaudeAgentLanguageModel.Dependencies = {
@@ -25,7 +29,8 @@ export const register = Effect.fn("ClaudeAISDK.register")(function* (ctx: Contex
           body: evt.options.body,
         })
         evt.sdk = {
-          languageModel: (modelID: string) => new ClaudeAgentLanguageModel.Model(modelID, dependencies, connection),
+          languageModel: (modelID: string) =>
+            new ClaudeAgentLanguageModel.Model(modelID, dependencies, connection, subscription),
         }
       }),
     { providerID: ClaudeProvider.ID },
