@@ -39,7 +39,12 @@ export const Input = Schema.Struct({
       'NEVER set this unless the user explicitly asks for a particular model or variant. It must be a chat model; image and decision models can\'t run subagents. The value is written as "providerID/modelID", or "providerID/modelID#variant" to include a variant. Do not guess the ID: look the model up with the models tool, filtering to your own provider first.',
   }),
   sessionID: Schema.optionalKey(SessionSchema.ID).annotate({
-    description: "Send a follow-up to an existing subagent, running or finished. Omit to start a new one.",
+    description:
+      "Send a follow-up to an existing subagent, running or finished. Omit to start a new one. Always pass it when messaging a subagent you already started; without it the follow-up would start a new subagent with no context.",
+  }),
+  new: Schema.optionalKey(Schema.Boolean).annotate({
+    description:
+      "Set to true only to deliberately start another subagent while one with the same description is still running in the background. Never set it together with sessionID.",
   }),
   background: Schema.optionalKey(Schema.Boolean).annotate({
     description:
@@ -56,6 +61,7 @@ export const description = [
   "Spawns an agent in a child session to work on the specified task.",
   "The output includes a sessionID you can pass back later to continue that specific conversation with the subagent.",
   "New child sessions start with fresh context, so include all relevant context and instructions when you don't pass a sessionID.",
+  "To message a subagent you already started, pass its sessionID. Without a sessionID, a call whose description matches a subagent still running in the background fails; pass new=true to start a second one deliberately.",
   "Foreground (default) runs the subagent to completion and returns its final response.",
   "Background mode (background=true) launches it asynchronously and returns immediately; you are notified when it finishes.",
   "Use background only for independent work that can run while you continue elsewhere.",
@@ -141,6 +147,26 @@ export const Plugin = {
               if (agent === undefined) return yield* new ToolFailure({ message: `Unknown agent: ${input.agent}` })
               if (agent.mode === "primary")
                 return yield* new ToolFailure({ message: `Agent ${input.agent} cannot run as a subagent` })
+              if (input.new === true && input.sessionID !== undefined)
+                return yield* new ToolFailure({
+                  message:
+                    "Pass either sessionID, to send a follow-up to an existing subagent, or new: true, to start another one; not both.",
+                })
+              // A follow-up that forgets its sessionID would otherwise start a duplicate subagent with no context.
+              if (input.sessionID === undefined && input.new !== true) {
+                const label = input.description.trim().toLowerCase()
+                const running = (yield* jobs.runningBackground)
+                  .filter((recovery) => recovery.kind === "subagent")
+                  .find(
+                    (recovery) =>
+                      recovery.parentSessionID === context.sessionID &&
+                      recovery.description.trim().toLowerCase() === label,
+                  )
+                if (running !== undefined)
+                  return yield* new ToolFailure({
+                    message: `A subagent with this description is already running (sessionID: ${running.childSessionID}). To send it a follow-up, pass sessionID: "${running.childSessionID}". To start another one anyway, pass new: true.`,
+                  })
+              }
               yield* permission
                 .assert({
                   action: name,

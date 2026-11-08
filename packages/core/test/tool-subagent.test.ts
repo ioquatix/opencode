@@ -630,6 +630,124 @@ describe("SubagentTool", () => {
     ),
   )
 
+  describe("a running background child with the same description", () => {
+    const setup = (run: Effect.Effect<string> = Effect.never) =>
+      Effect.gen(function* () {
+        const dir = yield* tmpdirScoped()
+        const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+        const sessions = yield* Session.Service
+        const parent = yield* sessions.create({ location, model: parentModel })
+        const child = yield* sessions.create({
+          parentID: parent.id,
+          title: "Refactor parser",
+          agent: Agent.ID.make("reviewer"),
+          model: childModel,
+        })
+        yield* withSubagent(parent.location)
+        const locations = yield* LocationServiceMap.Service
+        const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(parent.location)))
+        const jobs = yield* Job.Service
+        yield* jobs.start({
+          id: child.id,
+          type: SubagentTool.name,
+          title: "Refactor parser",
+          recovery: {
+            kind: "subagent",
+            parentSessionID: parent.id,
+            childSessionID: child.id,
+            agent: "reviewer",
+            description: "Refactor parser",
+          },
+          run,
+        })
+        yield* jobs.background(child.id)
+        yield* Effect.addFinalizer(() => jobs.cancel(child.id))
+        const call = (id: string, input: Record<string, unknown>) =>
+          executeTool(registry, {
+            sessionID: parent.id,
+            ...toolIdentity,
+            call: {
+              type: "tool-call",
+              id,
+              name: SubagentTool.name,
+              input: { agent: "reviewer", prompt: "Also keep the old API.", ...input },
+            },
+          }).pipe(Effect.timeout("2 seconds"))
+        return { sessions, jobs, parent, child, call }
+      })
+
+    it.live("refuses a new subagent without sessionID and names the running one", () =>
+      Effect.gen(function* () {
+        const test = yield* setup()
+        expect(yield* test.call("call-duplicate", { description: "  refactor PARSER " })).toEqual({
+          status: "error",
+          error: {
+            type: "tool.execution",
+            message: `A subagent with this description is already running (sessionID: ${test.child.id}). To send it a follow-up, pass sessionID: "${test.child.id}". To start another one anyway, pass new: true.`,
+          },
+        })
+        expect((yield* test.sessions.list({ parentID: test.parent.id })).data).toHaveLength(1)
+      }),
+    )
+
+    it.live("starts a duplicate when new is true", () =>
+      Effect.gen(function* () {
+        const test = yield* setup()
+        const result = yield* test.call("call-new", { description: "Refactor parser", new: true })
+        expect(result).toMatchObject({ status: "completed", metadata: { status: "completed" } })
+        expect(outputSessionID(result.metadata)).not.toBe(test.child.id)
+        expect((yield* test.sessions.list({ parentID: test.parent.id })).data).toHaveLength(2)
+      }),
+    )
+
+    it.live("starts a new subagent once the earlier one has finished", () =>
+      Effect.gen(function* () {
+        const gate = yield* Deferred.make<void>()
+        const test = yield* setup(Deferred.await(gate).pipe(Effect.as("done")))
+        yield* Deferred.succeed(gate, undefined)
+        yield* test.jobs.wait({ id: test.child.id })
+        const result = yield* test.call("call-after-finish", { description: "Refactor parser" })
+        expect(result).toMatchObject({ status: "completed", metadata: { status: "completed" } })
+        expect(outputSessionID(result.metadata)).not.toBe(test.child.id)
+      }),
+    )
+
+    it.live("starts a subagent with a different description", () =>
+      Effect.gen(function* () {
+        const test = yield* setup()
+        const result = yield* test.call("call-different", { description: "Review tests" })
+        expect(result).toMatchObject({ status: "completed", metadata: { status: "completed" } })
+        expect(outputSessionID(result.metadata)).not.toBe(test.child.id)
+      }),
+    )
+
+    it.live("still sends a follow-up with sessionID, but not together with new", () =>
+      Effect.gen(function* () {
+        const test = yield* setup()
+        expect(
+          yield* test.call("call-follow-up", {
+            description: "Refactor parser",
+            sessionID: test.child.id,
+            background: true,
+          }),
+        ).toMatchObject({ status: "completed", metadata: { sessionID: test.child.id, status: "running" } })
+        expect(
+          (yield* test.sessions.inbox(test.child.id)).find((message) => message.type === "user")?.payload.text,
+        ).toBe("Also keep the old API.")
+        expect(
+          yield* test.call("call-both", { description: "Refactor parser", sessionID: test.child.id, new: true }),
+        ).toEqual({
+          status: "error",
+          error: {
+            type: "tool.execution",
+            message:
+              "Pass either sessionID, to send a follow-up to an existing subagent, or new: true, to start another one; not both.",
+          },
+        })
+      }),
+    )
+  })
+
   it.live("rejects unrelated children and switches agents on continuation", () =>
     tmpdirScoped().pipe(
       Effect.flatMap((dir) =>
